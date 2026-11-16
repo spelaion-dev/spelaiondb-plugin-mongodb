@@ -46,8 +46,14 @@ says only what is different in this repository.
 - **TLS** with rustls: `disable` and `prefer` connect without TLS (MongoDB has no "if the
   server can"); `require` encrypts without checking the certificate; `verify-ca` and
   `verify-full` both check the certificate and the server's name (rustls in MongoDB's driver
-  cannot skip the name), and both are refused through a tunnel, where the name would be this
-  machine's. A client certificate and its key must be one PEM file.
+  cannot skip the name). Through a route, `route.rs` uses MongoDB's supported SOCKS5 connector
+  to keep the logical name for TLS while forwarding only to the core's fixed socket. The
+  listener is loopback-only, authenticates with a random per-session token, accepts only
+  CONNECT for the exact logical host and port, bounds its sockets and handshake time, and
+  closes every socket when the session drops. It must never resolve a SOCKS destination or
+  connect any address except the core's. Any change needs adversarial route tests and the
+  real TLS replica-set test in `tests/mongodb.rs` (wrong name, authority and set included).
+  A client certificate and its key must be one PEM file.
 - **Reads and writes are never retried** by the driver (`retryReads`, `retryWrites` off):
   nothing the user ran is run again.
 - A connection asking to be read-only is refused: MongoDB has no read-only mode in SpelaionDB

@@ -13,9 +13,12 @@ MongoDB yet.
 - **Not tested here:** MongoDB Atlas, Amazon DocumentDB and Azure Cosmos DB (paid services with
   no local image). The plugin connects only to the address SpelaionDB gives it; any DNS SRV
   discovery is the core's. It accepts `authSource`, `authMechanism` and `replicaSet` settings.
-  `replicaSet` checks the expected set without discovering other members. Verified TLS through
-  a tunnel is still unavailable: MongoDB's Rust driver checks the socket's host name, which
-  is the tunnel's loopback address. The plugin refuses that mode instead of weakening TLS.
+  `replicaSet` checks the expected set without discovering other members. Through a route,
+  MongoDB's supported SOCKS5 transport keeps the logical hostname for verified TLS. Its local,
+  authenticated adapter accepts only that exact host and port and connects only to the socket
+  supplied by the core. It never resolves or connects a destination requested by a client.
+  A local TLS replica set tests the correct hostname, a wrong hostname, an untrusted authority
+  and a wrong replica-set name; a real Atlas cluster has not been tried.
 
 Protocol: [SpelaionDB's plugin protocol](https://github.com/spelaion-dev/spelaiondb/blob/dev/docs/plugin-protocol.md),
 version 1.1, experimental until SpelaionDB 1.0. Rules for contributors and agents: `AGENTS.md`.

@@ -11,6 +11,7 @@
 //! set or looks servers up in DNS (`mongodb+srv`).
 
 mod results;
+mod route;
 
 use std::str::FromStr;
 use std::sync::{Arc, Mutex};
@@ -63,7 +64,19 @@ impl Driver for MongoDriver {
                 "MongoDB has no read-only mode in SpelaionDB yet".into(),
             ));
         }
-        let options = client_options(params)?;
+        let mut options = client_options(params)?;
+        let route = match params.connect_addr {
+            Some(address) => {
+                let route = route::Route::open(params.host.clone(), params.port, address)
+                    .await
+                    .map_err(|_| {
+                        DriverError::Connection("could not open the local MongoDB route".into())
+                    })?;
+                options.socks5_proxy = Some(route.proxy());
+                Some(route)
+            }
+            None => None,
+        };
         let client = Client::with_options(options).map_err(connection_error)?;
         let database = if params.database.is_empty() {
             "test".to_string()
@@ -96,6 +109,7 @@ impl Driver for MongoDriver {
                 ..Capabilities::default()
             },
             running: Arc::new(Mutex::new(None)),
+            _route: route,
         }))
     }
 }
@@ -110,11 +124,6 @@ fn client_options(params: &ConnectParams) -> Result<ClientOptions> {
             )));
         }
     }
-    let (host, port) = match params.connect_addr {
-        Some(addr) => (addr.ip().to_string(), addr.port()),
-        None => (params.host.clone(), params.port),
-    };
-    let tunnelled = params.connect_addr.is_some();
     let tls = match params.tls {
         // MongoDB has no "encrypt if the server can": `prefer` connects without TLS.
         TlsMode::Disable | TlsMode::Prefer => None,
@@ -123,18 +132,9 @@ fn client_options(params: &ConnectParams) -> Result<ClientOptions> {
                 .allow_invalid_certificates(true)
                 .build(),
         ),
-        // MongoDB's driver with rustls always checks the name of the address it connects to:
-        // `verify-ca` checks it too (stricter, never looser), and through a tunnel, where that
-        // address is this machine's, neither can check the server.
+        // The SOCKS transport keeps this logical name for TLS while reaching only the
+        // address supplied by the core. Verify-ca also checks the name (stricter).
         TlsMode::VerifyCa | TlsMode::VerifyFull => {
-            if tunnelled {
-                return Err(DriverError::Connection(
-                    "MongoDB's driver checks the certificate against the address it connects \
-                     to, which through a tunnel is this machine's: use `require` (encrypted, \
-                     the certificate not checked) or connect without a tunnel"
-                        .into(),
-                ));
-            }
             let cert_key = match (&params.client_certificate, &params.client_key) {
                 (None, None) => None,
                 (Some(cert), Some(key)) if cert == key => Some(cert.clone()),
@@ -186,8 +186,8 @@ fn client_options(params: &ConnectParams) -> Result<ClientOptions> {
     let timeout = params.connect_timeout();
     Ok(ClientOptions::builder()
         .hosts(vec![ServerAddress::Tcp {
-            host,
-            port: Some(port),
+            host: params.host.clone(),
+            port: Some(params.port),
         }])
         // Only the address given: never the other members a server names.
         .direct_connection(true)
@@ -211,6 +211,8 @@ struct MongoConnection {
     capabilities: Capabilities,
     /// Told when the request that is running must stop.
     running: Arc<Mutex<Option<Arc<Notify>>>>,
+    /// Dropping a session also closes its listener and all its forwarded sockets.
+    _route: Option<route::Route>,
 }
 
 /// A request, checked: the database it runs in and its command.
@@ -615,12 +617,15 @@ mod connection_options_tests {
         assert_eq!(
             options.hosts,
             vec![ServerAddress::Tcp {
-                host: "127.0.0.1".into(),
-                port: Some(12345),
+                host: "node.example.test".into(),
+                port: Some(27123),
             }]
         );
         params.tls = TlsMode::VerifyFull;
-        let error = client_options(&params).unwrap_err().to_string();
-        assert!(error.contains("through a tunnel"), "{error}");
+        let options = client_options(&params).unwrap();
+        let Some(Tls::Enabled(tls)) = options.tls else {
+            panic!("TLS required")
+        };
+        assert_ne!(tls.allow_invalid_certificates, Some(true));
     }
 }

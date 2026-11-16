@@ -36,3 +36,19 @@ services:
       timeout: 5s
       retries: 90
       start_period: 5s
+
+  # A certificate for mongo.example.test only: the host is deliberately not resolvable.
+  # The plugin must reach the supplied socket while checking this logical name.
+  mongodb-tls:
+    image: mongo:8.0
+    command: ["mongod", "--bind_ip_all", "--replSet", "atlas-test", "--tlsMode", "requireTLS", "--tlsCertificateKeyFile", "/certs/server.pem", "--tlsCAFile", "/certs/ca.crt", "--tlsAllowConnectionsWithoutCertificates"]
+    volumes:
+      - ./tls/server.pem:/certs/server.pem:ro
+      - ./tls/ca.crt:/certs/ca.crt:ro
+    ports:
+      - "127.0.0.1:27020:27017"
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--tls", "--tlsAllowInvalidCertificates", "--eval", "try { if (!rs.status().ok) quit(1); if (!db.hello().isWritablePrimary) quit(1); } catch (e) { rs.initiate({_id:'atlas-test',members:[{_id:0,host:'localhost:27017'}]}); quit(1); }"]
+      interval: 2s
+      timeout: 5s
+      retries: 60

@@ -648,25 +648,80 @@ async fn connecting_refuses_what_it_cannot_honour() {
     let mut tunnelled = params(&addr, "spelaion");
     tunnelled.connect_addr = Some(addr.parse().unwrap());
     tunnelled.host = "db.example.internal".into();
-    for mode in [
-        spelaion_driver_api::TlsMode::VerifyCa,
-        spelaion_driver_api::TlsMode::VerifyFull,
-    ] {
-        tunnelled.tls = mode;
-        let error = driver
-            .connect(&tunnelled)
-            .await
-            .err()
-            .expect("refused")
-            .to_string();
-        assert!(error.contains("through a tunnel"), "{mode:?}: {error}");
-    }
     // Through a "tunnel" (its address given apart from the name), it connects to that address.
     tunnelled.tls = spelaion_driver_api::TlsMode::Disable;
     driver
         .connect(&tunnelled)
         .await
         .expect("connects through the address given");
+}
+
+#[tokio::test]
+async fn routed_tls_checks_logical_hostname_authority_and_replica_set() {
+    if server("SPELAION_TEST_MONGO").is_none() {
+        return;
+    }
+    tokio::time::timeout(Duration::from_secs(30), async {
+        let plugin = Plugin::new(PROGRAM);
+        let driver = plugin.driver("mongodb");
+        let mut params = spelaion_driver_api::ConnectParams {
+            host: "mongo.example.test".into(),
+            port: 27017,
+            connect_addr: Some(
+                std::env::var("SPELAION_TEST_MONGO_TLS")
+                    .unwrap_or_else(|_| "127.0.0.1:27020".into())
+                    .parse()
+                    .expect("TLS host:port"),
+            ),
+            ca_certificate: Some(
+                std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("testing/tls/ca.crt"),
+            ),
+            tls: spelaion_driver_api::TlsMode::VerifyFull,
+            connect_timeout: Some(Duration::from_secs(2)),
+            ..Default::default()
+        };
+        params
+            .options
+            .insert("replicaSet".into(), "atlas-test".into());
+        for mode in [
+            spelaion_driver_api::TlsMode::VerifyFull,
+            spelaion_driver_api::TlsMode::VerifyCa,
+        ] {
+            params.tls = mode;
+            let connection = driver
+                .connect(&params)
+                .await
+                .expect("verified TLS through the supplied socket");
+            ok(
+                connection.as_ref(),
+                json!({"database":"admin","command":{"ping":1}}),
+            )
+            .await;
+            drop(connection);
+            params.host = "wrong.example.test".into();
+            assert!(
+                driver.connect(&params).await.is_err(),
+                "wrong certificate name must fail"
+            );
+            params.host = "mongo.example.test".into();
+        }
+        params.ca_certificate = None;
+        assert!(
+            driver.connect(&params).await.is_err(),
+            "an untrusted authority must fail"
+        );
+        params.ca_certificate =
+            Some(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("testing/tls/ca.crt"));
+        params
+            .options
+            .insert("replicaSet".into(), "wrong-set".into());
+        assert!(
+            driver.connect(&params).await.is_err(),
+            "wrong replica set must fail"
+        );
+    })
+    .await
+    .expect("TLS checks end in time");
 }
 
 #[tokio::test]

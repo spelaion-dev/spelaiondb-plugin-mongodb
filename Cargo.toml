@@ -2,7 +2,7 @@
 # The program's name, which is what SpelaionDB's plugins.toml pins.
 name = "spelaiondb-plugin-mongodb"
 description = "MongoDB for SpelaionDB, served as a plugin: MongoDB and the servers that speak its protocol"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 license = "Apache-2.0"
 repository = "https://github.com/spelaion-dev/spelaiondb-plugin-mongodb"
@@ -27,10 +27,12 @@ async-trait = "0.1"
 futures-util = "0.3"
 # MongoDB's own driver. No DNS resolver (`mongodb+srv` would make the plugin find servers by
 # itself: SpelaionDB's core opens every route), TLS with rustls.
-mongodb = { version = "3", default-features = false, features = ["compat-3-0-0", "rustls-tls"] }
+mongodb = { version = "3", default-features = false, features = ["compat-3-0-0", "rustls-tls", "socks5-proxy"] }
+getrandom = "0.3"
+subtle = "2"
 # Keys keep their order: a MongoDB command is named by its first key.
 serde_json = { version = "1", features = ["preserve_order"] }
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "net", "io-util"] }
 
 [dev-dependencies]
 # The conformance set every plugin runs against its own program (tests/conformance.rs).
